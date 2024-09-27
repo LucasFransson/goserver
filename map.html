@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Graph Visualization</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <style>
+        #map { height: 600px; }
+        #controls { margin-bottom: 10px; }
+        #debug { margin-top: 10px; border: 1px solid #ccc; padding: 10px; height: 100px; overflow-y: scroll; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <button onclick="generateGraph()">Generate Random Graph</button>
+        <input type="number" id="graphSize" value="100" min="10" max="1000">
+        <button onclick="findRoute()">Find Route</button>
+        Start: <input type="number" id="startNode" value="1" min="1">
+        End: <input type="number" id="endNode" value="2" min="1">
+    </div>
+    <div id="map"></div>
+    <div id="debug"></div>
+
+    <script>
+        let map = L.map('map').setView([0, 0], 2);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        let nodesMap = new Map();
+        let edges = [];
+        let pathLayer;
+
+        function log(message) {
+            console.log(message);
+            const debugElement = document.getElementById('debug');
+            debugElement.innerHTML += message + '<br>';
+            debugElement.scrollTop = debugElement.scrollHeight;
+        }
+
+        function handleFetchErrors(response) {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        }
+
+        function generateGraph() {
+            log('Generating graph...');
+            const size = document.getElementById('graphSize').value;
+            fetch(`/generate?size=${size}`)
+                .then(handleFetchErrors)
+                .then(data => {
+                    log('Graph generated. Response: ' + JSON.stringify(data));
+                    loadGraphData();
+                })
+                .catch(error => log('Error generating graph: ' + error.message));
+        }
+
+        function updateNodeInputRanges() {
+            const maxNodeId = nodesMap.size;
+            const startInput = document.getElementById('startNode');
+            const endInput = document.getElementById('endNode');
+            startInput.max = maxNodeId;
+            endInput.max = maxNodeId;
+        }
+
+
+
+function loadGraphData() {
+    log('Loading graph data...');
+    fetch('/graph-data')
+        .then(handleFetchErrors)
+        .then(data => {
+            log('Raw graph data received: ' + JSON.stringify(data));
+            nodesMap.clear();
+            if (Array.isArray(data.nodes)) {
+                data.nodes.forEach(node => {
+                    nodesMap.set(node.id, node);  
+                });
+            } else {
+                log('Error: nodes data is not an array');
+            }
+            edges = Array.isArray(data.edges) ? data.edges : [];
+            log(`Loaded ${nodesMap.size} nodes and ${edges.length} edges`);
+            log('First node: ' + JSON.stringify([...nodesMap.values()][0]));
+            log('First edge: ' + JSON.stringify(edges[0]));
+            updateNodeInputRanges();
+            visualizeGraph();
+        })
+        .catch(error => log('Error loading graph data: ' + error.message));
+}
+
+        function visualizeGraph() {
+    log('Visualizing graph...');
+    map.eachLayer(layer => {
+        if (layer instanceof L.Marker || layer instanceof L.Polyline) {
+            map.removeLayer(layer);
+        }
+    });
+
+    const bounds = L.latLngBounds();
+
+    log(`Nodes in nodesMap: ${nodesMap.size}`);
+    nodesMap.forEach((node, id) => {
+        log(`Node ${id}: Lat=${node.lat}, Lon=${node.lon}`);
+        if (isNaN(node.lat) || isNaN(node.lon)) {
+            log(`Invalid coordinates for node ${node.id}: (${node.lat}, ${node.lon})`);
+            return;
+        }
+        L.marker([node.lat, node.lon]).addTo(map)
+            .bindPopup(`Node ${node.id}`);
+        bounds.extend([node.lat, node.lon]);
+    });
+
+    log(`Edges: ${edges.length}`);
+    edges.forEach(edge => {
+        log(`Edge: ${edge.from} -> ${edge.to}`);
+        const fromNode = nodesMap.get(edge.from);
+        const toNode = nodesMap.get(edge.to);
+        if (fromNode && toNode && !isNaN(fromNode.lat) && !isNaN(fromNode.lon) && !isNaN(toNode.lat) && !isNaN(toNode.lon)) {
+            L.polyline([[fromNode.lat, fromNode.lon], [toNode.lat, toNode.lon]], {color: 'gray', weight: 1}).addTo(map);
+        } else {
+            log(`Invalid edge: ${edge.from} -> ${edge.to}`);
+        }
+    });
+
+    if (bounds.isValid()) {
+        map.fitBounds(bounds);
+    } else {
+        log('No valid bounds for the graph');
+    }
+    log('Graph visualization complete');
+}
+
+        // function findRoute() {
+        //     log('Finding route...');
+        //     const start = document.getElementById('startNode').value;
+        //     const end = document.getElementById('endNode').value;
+        //     fetch(`/route?start=${start}&end=${end}`)
+        //         .then(handleFetchErrors)
+        //         .then(data => {
+        //             if (!data.Path || data.Path.length === 0) {
+        //                 throw new Error('No valid path returned');
+        //             }
+        //             log('Route found. Path: ' + JSON.stringify(data.Path));
+        //             visualizeRoute(data.Path);
+        //         })
+        //         .catch(error => {
+        //             log('Error finding route: ' + error.message);
+        //             if (pathLayer) {
+        //                 map.removeLayer(pathLayer);
+        //             }
+        //         });
+        // }
+
+        function findRoute() {
+    log('Finding route...');
+    const start = document.getElementById('startNode').value;
+    const end = document.getElementById('endNode').value;
+    fetch(`/route?start=${start}&end=${end}`)
+        .then(handleFetchErrors)
+        .then(data => {
+            log('Route data received: ' + JSON.stringify(data));
+            if (!data.path || data.path.length === 0) {
+                throw new Error('No valid path returned');
+            }
+            log('Route found. Path: ' + JSON.stringify(data.path));
+            visualizeRoute(data.path);
+        })
+        .catch(error => {
+            log('Error finding route: ' + error.message);
+            if (pathLayer) {
+                map.removeLayer(pathLayer);
+            }
+        });
+}
+
+        function visualizeRoute(path) {
+    log('Visualizing route...');
+    if (pathLayer) {
+        map.removeLayer(pathLayer);
+    }
+
+    if (!path || path.length === 0) {
+        log('No valid path to visualize');
+        return;
+    }
+
+    const routeCoords = path.map(nodeId => {
+        const node = nodesMap.get(nodeId);
+        if (node && !isNaN(node.lat) && !isNaN(node.lon)) {
+            return [node.lat, node.lon];
+        } else {
+            log(`Invalid node in path: ${nodeId}`);
+            return null;
+        }
+    }).filter(coord => coord !== null);
+
+    if (routeCoords.length > 0) {
+        pathLayer = L.polyline(routeCoords, {color: 'red', weight: 3}).addTo(map);
+        map.fitBounds(pathLayer.getBounds());
+        log('Route visualization complete');
+    } else {
+        log('No valid coordinates to visualize route');
+    }
+}
+
+        // Load initial graph data
+        loadGraphData();
+    </script>
+</body>
+</html>
+
